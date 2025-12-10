@@ -3,23 +3,37 @@ on:
   push:
     branches:
       - master
-      - main
-      - develop
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04  # 固定系统版本，提升稳定性
     steps:
       - name: Checkout_Actions
-        uses: actions/checkout@v3
+        uses: actions/checkout@v3.6.0  # 固定版本，避免自动更新兼容问题
+      
       - name: Install MurphySec code scan cli
         run: |
-          wget -q https://s.murphysec.com/release/install.sh -O - || { echo "下载安装脚本失败"; exit 1; } | /bin/bash
+          # 下载安装脚本并检查
+          wget https://s.murphysec.com/release/install.sh -O /tmp/install_murphysec.sh || { echo "❌ 下载安装脚本失败"; exit 1; }
+          chmod +x /tmp/install_murphysec.sh
+          # 强制安装到/usr/local/bin
+          /bin/bash /tmp/install_murphysec.sh --install-dir /usr/local/bin
+          # 验证安装
+          if ! command -v murphysec &> /dev/null; then
+            echo "❌ murphysec 安装失败"
+            echo "PATH: $PATH"
+            ls -la /usr/local/bin/ | grep murphysec
+            exit 1
+          fi
+          murphysec --version
+      
       - name: Code scan
-        run: murphysec  scan . --token ${{ secrets.MURPHYSEC_TOKEN }} --json >scan_results.json
+        run: murphysec scan . --token ${{ secrets.MURPHYSEC_TOKEN }} --json >scan_results.json
+      
       - name: Format data
         run: | 
-          wget https://s.murphysec.com/github_actions_format.py
+          wget https://s.murphysec.com/github_actions_format.py || { echo "❌ 下载格式化脚本失败"; exit 1; }
           python3 github_actions_format.py
+      
       - name: Check if file exists
         run: |
           if [ -f "results.sarif" ]; then
@@ -27,8 +41,18 @@ jobs:
           else
             echo "file_exists=false" >> $GITHUB_ENV
           fi
+      
       - name: Upload SARIF file
         if: env.file_exists == 'true'
-        uses: github/codeql-action/upload-sarif@v2
+        uses: github/codeql-action/upload-sarif@v2.21.1  # 固定版本
         with:
           sarif_file: results.sarif
+      
+      # 可选：上传扫描结果作为artifact，便于排查
+      - name: Upload scan results
+        uses: actions/upload-artifact@v4
+        with:
+          name: murphysec-results
+          path: |
+            scan_results.json
+            results.sarif
